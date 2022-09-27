@@ -37,7 +37,9 @@ ch_multiqc_custom_config = params.multiqc_config ? Channel.fromPath(params.multi
 // MODULE: Loaded from modules/local/
 //
 
+include { READMEASURE } from '../modules/local/readmeasure'
 include { PREPARE_GENOME } from '../subworkflows/local/prepare_genome'
+include { RMATS } from '../modules/local/rmats'
 
 
 //
@@ -137,6 +139,15 @@ workflow NAGNAG {
     ch_filtered_reads = FASTQC_UMITOOLS_TRIMGALORE.out.reads
 
 
+    /// TO DO: account for discepancies in read length
+
+    ch_readlength = Channel.empty()
+
+    READMEASURE(FASTQC_UMITOOLS_TRIMGALORE.out.fastqc_zip)
+    ch_readlength = READMEASURE.out.readlength.toInteger()
+
+    ch_versions = ch_versions.mix(READMEASURE.out.versions)
+
     //
     // SUBWORKFLOW: Alignment with STAR
     //
@@ -186,6 +197,29 @@ workflow NAGNAG {
             }
             ch_versions = ch_versions.mix(DEDUP_UMI_UMITOOLS_GENOME.out.versions)
         }
+
+
+        ch_rmats_jcec                 = Channel.empty()
+        ch_rmats_jc                   = Channel.empty()
+        ch_rmats_summary              = Channel.empty()
+
+        ch_genome_bam.map  {
+        meta, bam ->
+        fmeta = meta.findAll { it.key != 'read_group' }
+        fmeta.id = fmeta.id.split('_')[0..-2].join('_')
+        [ fmeta, bam ] }
+        .groupTuple(by: [0])
+        .map { [ it[0], it[1].flatten() ] }
+        .toList()
+        .set { ch_sort_bam }
+
+        /// Implement forks for
+        RMATS(ch_sort_bam, PREPARE_GENOME.out.gtf, ch_readlength.first())
+
+        ch_rmats_jcec   = RMATS.out.jcec
+        ch_rmats_jc     = RMATS.out.jc
+        ch_rmats_summary= RMATS.out.summary
+        ch_versions     = ch_versions.mix(RMATS.out.versions)
     }
 
     CUSTOM_DUMPSOFTWAREVERSIONS (
@@ -208,7 +242,7 @@ workflow NAGNAG {
         ch_multiqc_files = ch_multiqc_files.mix(FASTQC_UMITOOLS_TRIMGALORE.out.fastqc_zip.collect{it[1]}.ifEmpty([]))
         ch_multiqc_files = ch_multiqc_files.mix(ch_star_multiqc.collect{it[1]}.ifEmpty([]))
         ch_multiqc_files = ch_multiqc_files.mix(ch_samtools_stats.collect{it[1]}.ifEmpty([]))
-        ch_multiqc_files = ch_multiqc_files.mix( ch_samtools_flagstat.collect{it[1]}.ifEmpty([]))
+        ch_multiqc_files = ch_multiqc_files.mix(ch_samtools_flagstat.collect{it[1]}.ifEmpty([]))
         ch_multiqc_files = ch_multiqc_files.mix(ch_samtools_idxstats.collect{it[1]}.ifEmpty([]))
 
 
